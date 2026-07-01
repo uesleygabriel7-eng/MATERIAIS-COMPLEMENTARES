@@ -7,15 +7,12 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- Babel Travado na Versão 7.21.0 -->
     <script src="https://unpkg.com/@babel/standalone@7.21.0/babel.min.js"></script>
 
-    <!-- SheetJS (Biblioteca para gerar Excel) -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
     <div id="root"></div>
@@ -490,37 +487,91 @@
           const updateInput = (key, value) => setInputs((p) => ({ ...p, [key]: value }));
 
           const exportarExcel = () => {
-            const dadosExportacao = [];
+            const ws_data = [];
+            const merges = [];
+            let rowIndex = 0;
+
+            const titleStyle = { font: { bold: true }, alignment: { vertical: "center" } };
             
-            dadosExportacao.push(["Obra:", obra || "-"]);
-            dadosExportacao.push(["Responsável:", responsavel || "-"]);
-            dadosExportacao.push(["Data:", data || "-"]);
-            dadosExportacao.push([]); 
+            ws_data.push([{ v: "Obra:", s: titleStyle }, { v: obra || "-" }]);
+            ws_data.push([{ v: "Responsável:", s: titleStyle }, { v: responsavel || "-" }]);
+            ws_data.push([{ v: "Data:", s: titleStyle }, { v: data || "-" }]);
+            ws_data.push([]);
+            rowIndex += 4;
+
+            const headerStyle = {
+              font: { bold: true, color: { rgb: "FFFFFF" } },
+              fill: { fgColor: { rgb: "4F81BD" } },
+              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+              alignment: { horizontal: "center", vertical: "center" }
+            };
+
+            const groupStyle = {
+              font: { bold: true },
+              fill: { fgColor: { rgb: "DCE6F1" } },
+              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+              alignment: { vertical: "center" }
+            };
+
+            const cellStyle = {
+              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+              alignment: { vertical: "center" }
+            };
             
-            dadosExportacao.push(["GRUPO", "CÓDIGO", "DESCRIÇÃO", "QUANTIDADE", "PEDIDO", "COMPLEMENTAR"]);
+            const numStyle = {
+              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+              alignment: { horizontal: "right", vertical: "center" }
+            };
 
             sections.forEach(s => {
-              const itens = (s.rows || []).filter(r => !r.isSubheader && (computedQty[r.row] ?? 0) > 0);
-              if (itens.length > 0) {
-                itens.forEach(r => {
-                  dadosExportacao.push([
-                    s.title,
-                    r.cod || "-",
-                    r.desc,
-                    computedQty[r.row] || 0,
-                    r.pedido || "-",
-                    r.complementar || "-"
-                  ]);
-                });
-              }
+              ws_data.push([
+                { v: "GRUPO: " + s.title, s: groupStyle },
+                { v: "", s: groupStyle },
+                { v: "", s: groupStyle }
+              ]);
+              merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 2 } });
+              rowIndex++;
+
+              ws_data.push([
+                { v: "CÓDIGO", s: headerStyle },
+                { v: "DESCRIÇÃO", s: headerStyle },
+                { v: "QUANTIDADE", s: headerStyle }
+              ]);
+              rowIndex++;
+
+              (s.rows || []).forEach(r => {
+                if (r.isSubheader) {
+                   ws_data.push([
+                     { v: r.desc, s: groupStyle },
+                     { v: "", s: groupStyle },
+                     { v: "", s: groupStyle }
+                   ]);
+                   merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 2 } });
+                   rowIndex++;
+                } else {
+                   const qty = computedQty[r.row] || 0;
+                   ws_data.push([
+                     { v: r.cod || "-", s: cellStyle },
+                     { v: r.desc, s: cellStyle },
+                     { v: qty, t: "n", s: numStyle }
+                   ]);
+                   rowIndex++;
+                }
+              });
+              
+              ws_data.push([]);
+              rowIndex++;
             });
 
-            if (dadosExportacao.length <= 5) {
-              alert("Nenhum item com quantidade preenchida para exportar.");
-              return;
-            }
+            const worksheet = XLSX.utils.aoa_to_sheet(ws_data);
+            worksheet["!merges"] = merges;
+            
+            worksheet["!cols"] = [
+              { wch: 15 }, 
+              { wch: 60 }, 
+              { wch: 15 }  
+            ];
 
-            const worksheet = XLSX.utils.aoa_to_sheet(dadosExportacao);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "Quantitativos");
             
