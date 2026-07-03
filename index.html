@@ -361,13 +361,33 @@
           const [inputs, setInputs] = useState(defaultInputs);
           const [quant, setQuant] = useState(buildInitialQuant);
           const [overrides, setOverrides] = useState({}); 
+          
+          // Estados Independentes Globais
           const [comentarios, setComentarios] = useState({});
           const [fotos, setFotos] = useState({});
+          
           const [filtro, setFiltro] = useState("todos");
           const [photoModal, setPhotoModal] = useState(null);
+          const [commentModal, setCommentModal] = useState(null);
 
+          // Carrega as fotos globais para todos os usuários assim que logar
+          useEffect(() => {
+            if (!isAuthenticated) return;
+            fetch(`${FIREBASE_BASE}/fotos.json`, { cache: "no-store" })
+              .then(res => res.json())
+              .then(data => setFotos(data || {}));
+          }, [isAuthenticated]);
+
+          // Carrega os comentários específicos do usuário selecionado
           useEffect(() => {
             if (!usuario) return;
+            
+            // Puxa comentários individuais
+            fetch(`${FIREBASE_BASE}/usuarios/${usuario}/comentarios.json`, { cache: "no-store" })
+              .then(res => res.json())
+              .then(data => setComentarios(data || {}));
+
+            // Puxa lista de projetos
             setLoadingProjetos(true);
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos.json`, { cache: "no-store" })
               .then((res) => res.json())
@@ -390,15 +410,14 @@
             }
 
             setStatusSalvamento("Criando...");
+            // Apenas os dados de quantitativo vão para a gaveta do projeto
             const dadosIniciais = {
               obra: nome,
               responsavel: usuario,
               data: new Date().toISOString().slice(0, 10),
               inputs: defaultInputs,
               quant: buildInitialQuant(),
-              overrides: {},
-              comentarios: {},
-              fotos: {}
+              overrides: {}
             };
 
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${nome}.json`, {
@@ -434,8 +453,6 @@
                   setInputs(d.inputs || defaultInputs);
                   setQuant(d.quant || buildInitialQuant());
                   setOverrides(d.overrides || {}); 
-                  setComentarios(d.comentarios || {});
-                  setFotos(d.fotos || {});
                 } else {
                   setObra(nome);
                   setResponsavel(usuario);
@@ -443,8 +460,6 @@
                   setInputs(defaultInputs);
                   setQuant(buildInitialQuant());
                   setOverrides({});
-                  setComentarios({});
-                  setFotos({});
                 }
                 setProjetoAtual(nome);
                 setStatusSalvamento("");
@@ -453,13 +468,44 @@
 
           const salvarDados = () => {
             setStatusSalvamento("Salvando...");
+            // Salva apenas os números da obra na gaveta de projetos
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${projetoAtual}.json`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ obra, responsavel, data, inputs, quant, overrides, comentarios, fotos })
+              body: JSON.stringify({ obra, responsavel, data, inputs, quant, overrides })
             }).then(() => {
               setStatusSalvamento("Salvo na nuvem!");
               setTimeout(() => setStatusSalvamento(""), 2000);
+            });
+          };
+
+          // Salva Comentários na gaveta independente do usuário em tempo real
+          const atualizarComentario = (row, texto) => {
+            const novos = { ...comentarios };
+            if (!texto.trim()) {
+              delete novos[row];
+            } else {
+              novos[row] = texto;
+            }
+            setComentarios(novos);
+            fetch(`${FIREBASE_BASE}/usuarios/${usuario}/comentarios.json`, {
+              method: "PUT",
+              body: JSON.stringify(novos)
+            });
+          };
+
+          // Salva/Apaga Fotos na gaveta global em tempo real
+          const atualizarFoto = (row, base64) => {
+            const novas = { ...fotos };
+            if (!base64) {
+              delete novas[row];
+            } else {
+              novas[row] = base64;
+            }
+            setFotos(novas);
+            fetch(`${FIREBASE_BASE}/fotos.json`, {
+              method: "PUT",
+              body: JSON.stringify(novas)
             });
           };
 
@@ -719,7 +765,7 @@
                   </div>
 
                   {sections.map((s, idx) => (
-                    <SectionCard key={s.title || idx} section={s} index={idx} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} setComentarios={setComentarios} fotos={fotos} setPhotoModal={setPhotoModal} />
+                    <SectionCard key={s.title || idx} section={s} index={idx} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} />
                   ))}
 
                   <footer className="text-center text-xs text-slate-500 py-6">{totalLinhasPreenchidas} itens preenchidos neste projeto.</footer>
@@ -767,7 +813,7 @@
                                   const ctx = canvas.getContext('2d');
                                   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                                   const base64 = canvas.toDataURL('image/jpeg', 0.6);
-                                  setFotos(prev => ({...prev, [photoModal.row]: base64}));
+                                  atualizarFoto(photoModal.row, base64);
                                 };
                                 img.src = ev.target.result;
                               };
@@ -781,12 +827,8 @@
                         {fotos[photoModal.row] && (
                           <button 
                             onClick={() => {
-                              if (confirm("Apagar esta foto?")) {
-                                setFotos(prev => {
-                                  const next = {...prev};
-                                  delete next[photoModal.row];
-                                  return next;
-                                });
+                              if (confirm("Apagar esta foto permanentemente para todos?")) {
+                                atualizarFoto(photoModal.row, null);
                               }
                             }}
                             className="px-4 py-2 bg-red-50 text-red-600 text-sm font-medium rounded-md hover:bg-red-100 transition"
@@ -798,6 +840,50 @@
                     </div>
                   </div>
                 )}
+
+                {commentModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
+                      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                        <h3 className="font-semibold text-slate-800 text-sm">Adicionar Comentário</h3>
+                        <button onClick={() => setCommentModal(null)} className="text-slate-400 hover:text-slate-700"><IconClose /></button>
+                      </div>
+                      <div className="p-4 bg-white">
+                        <textarea
+                          autoFocus
+                          className="w-full border border-slate-300 rounded-md p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 min-h-[120px] resize-none"
+                          placeholder="Escreva seu comentário aqui..."
+                          value={commentModal.current}
+                          onChange={(e) => setCommentModal({ ...commentModal, current: e.target.value })}
+                        ></textarea>
+                      </div>
+                      <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between">
+                        <button 
+                          onClick={() => {
+                            atualizarComentario(commentModal.row, "");
+                            setCommentModal(null);
+                          }}
+                          className="px-4 py-2 text-red-600 bg-red-50 text-sm font-medium rounded-md hover:bg-red-100 transition"
+                        >
+                          Apagar
+                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={() => setCommentModal(null)} className="px-4 py-2 text-slate-600 bg-slate-200 text-sm font-medium rounded-md hover:bg-slate-300 transition">Cancelar</button>
+                          <button 
+                            onClick={() => {
+                              atualizarComentario(commentModal.row, commentModal.current);
+                              setCommentModal(null);
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition"
+                          >
+                            Salvar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
               <PrintReport obra={obra} responsavel={responsavel} data={data} sections={sections} computedQty={computedQty} />
             </div>
@@ -828,7 +914,7 @@
           );
         }
 
-        function SectionCard({ section, index, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, setComentarios, fotos, setPhotoModal }) {
+        function SectionCard({ section, index, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal }) {
           const visibleRows = (section.rows || []).filter((r) => r.isSubheader || filtro === "todos" || r.pedido === filtro);
           if (visibleRows.filter((r) => !r.isSubheader).length === 0) return null;
 
@@ -892,18 +978,7 @@
                             <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{r.complementar}{meta && <div className="text-[10px] mt-0.5 italic opacity-70">{meta.formula}</div>}</td>
                             <td className="px-3 py-2 text-center">
                               <button
-                                onClick={() => {
-                                  const current = comentarios[r.row] || "";
-                                  const updated = prompt("Digite o comentário para este item:", current);
-                                  if (updated !== null) {
-                                    setComentarios(prev => {
-                                      const next = { ...prev };
-                                      if (updated.trim() === "") delete next[r.row];
-                                      else next[r.row] = updated;
-                                      return next;
-                                    });
-                                  }
-                                }}
+                                onClick={() => setCommentModal({ row: r.row, current: comentarios[r.row] || "" })}
                                 title={comentarios[r.row] || "Adicionar comentário"}
                                 className={`p-1.5 rounded-md transition ${comentarios[r.row] ? 'text-blue-600 bg-blue-50' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-500'}`}
                               >
