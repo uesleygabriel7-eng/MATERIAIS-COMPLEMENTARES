@@ -365,6 +365,8 @@
           // Estados Independentes Globais
           const [comentarios, setComentarios] = useState({});
           const [fotos, setFotos] = useState({});
+          const [precos, setPrecos] = useState({});
+          const [incluirValores, setIncluirValores] = useState(false);
           
           const [filtro, setFiltro] = useState("todos");
           const [photoModal, setPhotoModal] = useState(null);
@@ -376,6 +378,21 @@
             fetch(`${FIREBASE_BASE}/fotos.json`, { cache: "no-store" })
               .then(res => res.json())
               .then(data => setFotos(data || {}));
+          }, [isAuthenticated]);
+
+          // Carrega preços globais (compartilhados entre todos os usuários e projetos)
+          useEffect(() => {
+            if (!isAuthenticated) return;
+            fetch(`${FIREBASE_BASE}/precos.json`, { cache: "no-store" })
+              .then(res => res.json())
+              .then(data => setPrecos(data || {}));
+            // Sincroniza a cada 15s para pegar alterações feitas por outros usuários
+            const timer = setInterval(() => {
+              fetch(`${FIREBASE_BASE}/precos.json`, { cache: "no-store" })
+                .then(res => res.json())
+                .then(data => setPrecos(data || {}));
+            }, 15000);
+            return () => clearInterval(timer);
           }, [isAuthenticated]);
 
           // Carrega os comentários específicos do usuário selecionado
@@ -509,6 +526,33 @@
             });
           };
 
+          // Salva Preço Unitário globalmente (compartilhado entre TODOS os usuários e planilhas)
+          const atualizarPreco = (row, valor) => {
+            const novos = { ...precos };
+            if (valor === "" || valor === null || valor === undefined) {
+              delete novos[row];
+            } else {
+              novos[row] = String(valor);
+            }
+            setPrecos(novos);
+            fetch(`${FIREBASE_BASE}/precos.json`, {
+              method: "PUT",
+              body: JSON.stringify(novos)
+            });
+          };
+
+          // Converte texto pt-BR (vírgula ou ponto) para número
+          const parsePreco = (v) => {
+            if (v === undefined || v === null || v === "") return 0;
+            const n = parseFloat(String(v).replace(",", "."));
+            return Number.isFinite(n) ? n : 0;
+          };
+
+          const formatBRL = (n) => {
+            if (!Number.isFinite(n)) n = 0;
+            return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+          };
+
           const computedQty = useMemo(() => {
             const map = {};
             for (const s of sections) {
@@ -531,6 +575,19 @@
             return map;
           }, [quant, inputs, overrides]);
 
+          const totalGeral = useMemo(() => {
+            let total = 0;
+            for (const sec of sections) {
+              for (const r of sec.rows) {
+                if (r.isSubheader) continue;
+                const qty = computedQty[r.row] ?? 0;
+                const preco = parsePreco(precos[r.row]);
+                total += qty * preco;
+              }
+            }
+            return total;
+          }, [computedQty, precos]);
+
           const totalLinhasPreenchidas = sections.reduce(
             (acc, s) => acc + s.rows.filter((r) => !r.isSubheader && (computedQty[r.row] ?? 0) > 0).length, 0
           );
@@ -549,14 +606,17 @@
             const ws_data = [];
             const merges = [];
             let rowIndex = 0;
+            const withVals = incluirValores;
+            const numCols = withVals ? 6 : 3;
+            const lastCol = numCols - 1;
 
             const titleStyle = { font: { bold: true }, alignment: { vertical: "center" } };
-            
             ws_data.push([{ v: "Obra:", s: titleStyle }, { v: obra || "-" }]);
             ws_data.push([{ v: "Responsável:", s: titleStyle }, { v: responsavel || "-" }]);
             ws_data.push([{ v: "Data:", s: titleStyle }, { v: data || "-" }]);
+            if (withVals) ws_data.push([{ v: "Valor total do projeto:", s: titleStyle }, { v: totalGeral, t: "n", z: '"R$" #,##0.00' }]);
             ws_data.push([]);
-            rowIndex += 4;
+            rowIndex += withVals ? 5 : 4;
 
             const headerStyle = {
               font: { bold: true, color: { rgb: "FFFFFF" } },
@@ -564,76 +624,101 @@
               border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
               alignment: { horizontal: "center", vertical: "center" }
             };
-
             const groupStyle = {
               font: { bold: true },
               fill: { fgColor: { rgb: "DCE6F1" } },
               border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
               alignment: { vertical: "center" }
             };
-
             const cellStyle = {
               border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
               alignment: { vertical: "center" }
             };
-            
             const numStyle = {
               border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
               alignment: { horizontal: "right", vertical: "center" }
             };
+            const moneyStyle = { ...numStyle, numFmt: '"R$" #,##0.00' };
+            const totalRowStyle = {
+              font: { bold: true, color: { rgb: "FFFFFF" } },
+              fill: { fgColor: { rgb: "2E7D32" } },
+              border: { top: { style: "medium" }, bottom: { style: "medium" }, left: { style: "thin" }, right: { style: "thin" } },
+              alignment: { horizontal: "right", vertical: "center" }
+            };
+            const padGroup = (arr) => {
+              while (arr.length < numCols) arr.push({ v: "", s: groupStyle });
+              return arr;
+            };
 
             sections.forEach(s => {
-              ws_data.push([
-                { v: "GRUPO: " + s.title, s: groupStyle },
-                { v: "", s: groupStyle },
-                { v: "", s: groupStyle }
-              ]);
-              merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 2 } });
+              const grpRow = padGroup([{ v: "GRUPO: " + s.title, s: groupStyle }]);
+              ws_data.push(grpRow);
+              merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: lastCol } });
               rowIndex++;
 
-              ws_data.push([
+              const hdr = [
                 { v: "CÓDIGO", s: headerStyle },
                 { v: "DESCRIÇÃO", s: headerStyle },
                 { v: "QUANTIDADE", s: headerStyle }
-              ]);
+              ];
+              if (withVals) {
+                hdr.push({ v: "VALOR UNIT.", s: headerStyle });
+                hdr.push({ v: "VALOR TOTAL", s: headerStyle });
+                hdr.push({ v: "REPRESENT.", s: headerStyle });
+              }
+              ws_data.push(hdr);
               rowIndex++;
 
               (s.rows || []).forEach(r => {
                 if (r.isSubheader) {
-                   ws_data.push([
-                     { v: r.desc, s: groupStyle },
-                     { v: "", s: groupStyle },
-                     { v: "", s: groupStyle }
-                   ]);
-                   merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 2 } });
-                   rowIndex++;
+                  ws_data.push(padGroup([{ v: r.desc, s: groupStyle }]));
+                  merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: lastCol } });
+                  rowIndex++;
                 } else {
-                   const qty = computedQty[r.row] || 0;
-                   ws_data.push([
-                     { v: r.cod || "-", s: cellStyle },
-                     { v: r.desc, s: cellStyle },
-                     { v: qty, t: "n", s: numStyle }
-                   ]);
-                   rowIndex++;
+                  const qty = computedQty[r.row] || 0;
+                  const row = [
+                    { v: r.cod || "-", s: cellStyle },
+                    { v: r.desc, s: cellStyle },
+                    { v: qty, t: "n", s: numStyle }
+                  ];
+                  if (withVals) {
+                    const unit = parsePreco(precos[r.row]);
+                    const tot = qty * unit;
+                    const rep = totalGeral > 0 ? tot / totalGeral : 0;
+                    row.push({ v: unit, t: "n", s: { ...moneyStyle, numFmt: '"R$" #,##0.00' }, z: '"R$" #,##0.00' });
+                    row.push({ v: tot, t: "n", s: { ...moneyStyle, numFmt: '"R$" #,##0.00' }, z: '"R$" #,##0.00' });
+                    row.push({ v: rep, t: "n", s: { ...numStyle, numFmt: "0.00%" }, z: "0.00%" });
+                  }
+                  ws_data.push(row);
+                  rowIndex++;
                 }
               });
-              
               ws_data.push([]);
               rowIndex++;
             });
 
+            if (withVals) {
+              const totalRow = [
+                { v: "TOTAL GERAL DO PROJETO", s: totalRowStyle },
+                { v: "", s: totalRowStyle },
+                { v: "", s: totalRowStyle },
+                { v: "", s: totalRowStyle },
+                { v: totalGeral, t: "n", s: { ...totalRowStyle, numFmt: '"R$" #,##0.00' }, z: '"R$" #,##0.00' },
+                { v: 1, t: "n", s: { ...totalRowStyle, numFmt: "0.00%" }, z: "0.00%" }
+              ];
+              ws_data.push(totalRow);
+              merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 3 } });
+              rowIndex++;
+            }
+
             const worksheet = XLSX.utils.aoa_to_sheet(ws_data);
             worksheet["!merges"] = merges;
-            
-            worksheet["!cols"] = [
-              { wch: 15 }, 
-              { wch: 60 }, 
-              { wch: 15 }  
-            ];
+            worksheet["!cols"] = withVals
+              ? [{ wch: 15 }, { wch: 60 }, { wch: 15 }, { wch: 15 }, { wch: 18 }, { wch: 14 }]
+              : [{ wch: 15 }, { wch: 60 }, { wch: 15 }];
 
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "Quantitativos");
-            
             const nomeArquivo = `${obra ? obra.replace(/[^a-z0-9]/gi, '_') : 'Projeto'}_Quantitativos.xlsx`;
             XLSX.writeFile(workbook, nomeArquivo);
           };
@@ -738,6 +823,10 @@
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <label className="hidden md:inline-flex items-center gap-2 text-xs font-medium text-slate-700 bg-slate-100 border border-slate-200 px-3 py-2 rounded cursor-pointer hover:bg-slate-200 transition" title="Se marcado, exporta as colunas Valor Unitário, Valor Total e Representatividade no PDF e Excel">
+                        <input type="checkbox" checked={incluirValores} onChange={(e) => setIncluirValores(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+                        Incluir valores no PDF/Excel
+                      </label>
                       {statusSalvamento && <span className="hidden md:inline text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-1 rounded">{statusSalvamento}</span>}
                       <button onClick={salvarDados} className="inline-flex items-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 transition shadow-sm"><IconSave /> Salvar</button>
                       <button onClick={reset} className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50 transition"><IconRotate /> Limpar</button>
@@ -765,8 +854,18 @@
                   </div>
 
                   {sections.map((s, idx) => (
-                    <SectionCard key={s.title || idx} section={s} index={idx} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} />
+                    <SectionCard key={s.title || idx} section={s} index={idx} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} precos={precos} atualizarPreco={atualizarPreco} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
                   ))}
+
+                  <section className="rounded-lg border-2 border-emerald-500 bg-emerald-50 p-5 shadow-sm">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-sm font-semibold uppercase tracking-wider text-emerald-700">Valor Total do Projeto</h2>
+                        <p className="text-xs text-emerald-600 mt-1">Soma de todos os itens (Quantidade × Valor Unitário)</p>
+                      </div>
+                      <div className="text-3xl font-bold text-emerald-800 font-mono">{formatBRL(totalGeral)}</div>
+                    </div>
+                  </section>
 
                   <footer className="text-center text-xs text-slate-500 py-6">{totalLinhasPreenchidas} itens preenchidos neste projeto.</footer>
                 </main>
@@ -885,7 +984,7 @@
                 )}
 
               </div>
-              <PrintReport obra={obra} responsavel={responsavel} data={data} sections={sections} computedQty={computedQty} />
+              <PrintReport obra={obra} responsavel={responsavel} data={data} sections={sections} computedQty={computedQty} precos={precos} incluirValores={incluirValores} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
             </div>
           );
         }
@@ -914,7 +1013,7 @@
           );
         }
 
-        function SectionCard({ section, index, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal }) {
+        function SectionCard({ section, index, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal, precos, atualizarPreco, totalGeral, parsePreco, formatBRL }) {
           const visibleRows = (section.rows || []).filter((r) => r.isSubheader || filtro === "todos" || r.pedido === filtro);
           if (visibleRows.filter((r) => !r.isSubheader).length === 0) return null;
 
@@ -934,12 +1033,15 @@
                       <th className="px-3 py-2 font-medium w-24">Pedido</th>
                       <th className="px-3 py-2 font-medium hidden md:table-cell">Complementar</th>
                       <th className="px-3 py-2 font-medium w-16 text-center">Coment</th>
+                      <th className="px-3 py-2 font-medium w-32 bg-amber-50 text-amber-700">Valor Unit. (R$)</th>
+                      <th className="px-3 py-2 font-medium w-32 bg-emerald-50 text-emerald-700">Valor Total</th>
+                      <th className="px-3 py-2 font-medium w-24 bg-blue-50 text-blue-700 text-center">Representat.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {visibleRows.map((r) => {
                       if (r.isSubheader) {
-                        return <tr key={r.row} className="bg-slate-100 border-t border-slate-200"><td colSpan="6" className="px-3 py-2 font-semibold text-sm uppercase tracking-wide">{r.desc}</td></tr>;
+                        return <tr key={r.row} className="bg-slate-100 border-t border-slate-200"><td colSpan="9" className="px-3 py-2 font-semibold text-sm uppercase tracking-wide">{r.desc}</td></tr>;
                       }
                       const computed = isComputed(r.row);
                       const meta = computed ? computedFormulas[r.row] : null;
@@ -985,11 +1087,30 @@
                                 <IconComment />
                               </button>
                             </td>
+                            <td className="px-3 py-2 bg-amber-50/40">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={precos[r.row] ?? ""}
+                                onChange={(e) => atualizarPreco(r.row, e.target.value)}
+                                placeholder="0,00"
+                                title="Preço unitário compartilhado entre todos os usuários e projetos. Se você ou o Gabriel alterar aqui, muda em todas as planilhas."
+                                className="w-full border border-amber-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-amber-500 font-mono text-right bg-white"
+                              />
+                            </td>
+                            <td className="px-3 py-2 bg-emerald-50/40 text-right font-mono text-sm font-semibold text-emerald-800 tabular-nums">
+                              {formatBRL((computedQty[r.row] ?? 0) * parsePreco(precos[r.row]))}
+                            </td>
+                            <td className="px-3 py-2 bg-blue-50/40 text-right font-mono text-xs text-blue-800 tabular-nums">
+                              {totalGeral > 0
+                                ? (((computedQty[r.row] ?? 0) * parsePreco(precos[r.row]) / totalGeral) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + "%"
+                                : "—"}
+                            </td>
                           </tr>
                           {params && (
                             <tr key={`${r.row}-params`} className="bg-slate-50 border-t border-dashed border-slate-200">
                               <td></td>
-                              <td colSpan="5" className="px-3 py-3">
+                              <td colSpan="8" className="px-3 py-3">
                                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Parâmetros para o cálculo desta linha</div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-2xl">
                                   {params.map((p) => <ParamInput key={p.key} param={p} inputs={inputs} updateInput={updateInput} />)}
@@ -1007,8 +1128,14 @@
           );
         }
 
-        function PrintReport({ obra, responsavel, data, sections, computedQty }) {
-          const items = sections.flatMap((s) => (s.rows||[]).filter((r) => !r.isSubheader && (computedQty[r.row] ?? 0) > 0).map((r) => ({ section: s.title, cod: r.cod, desc: r.desc, qty: computedQty[r.row] ?? 0 })));
+        function PrintReport({ obra, responsavel, data, sections, computedQty, precos, incluirValores, totalGeral, parsePreco, formatBRL }) {
+          const items = sections.flatMap((s) => (s.rows||[]).filter((r) => !r.isSubheader && (computedQty[r.row] ?? 0) > 0).map((r) => {
+            const qty = computedQty[r.row] ?? 0;
+            const unit = parsePreco(precos[r.row]);
+            const totalItem = qty * unit;
+            return { section: s.title, cod: r.cod, desc: r.desc, qty, unit, totalItem };
+          }));
+          const colSpan = incluirValores ? 6 : 3;
           return (
             <div className="hidden print:block text-black font-sans text-sm">
               <div className="border-b-2 border-black pb-2 mb-4">
@@ -1018,13 +1145,39 @@
                   <div><strong>Responsável:</strong> {responsavel || "—"}</div>
                   <div><strong>Data:</strong> {data}</div>
                   <div><strong>Total de itens:</strong> {items.length}</div>
+                  {incluirValores && <div className="col-span-2"><strong>Valor total do projeto:</strong> {formatBRL(totalGeral)}</div>}
                 </div>
               </div>
               <table className="w-full border-collapse">
-                <thead><tr className="border-b border-black text-left uppercase text-xs"><th className="pb-1 w-20">Código</th><th className="pb-1">Descrição</th><th className="pb-1 w-24 text-right">Quantidade</th></tr></thead>
+                <thead>
+                  <tr className="border-b border-black text-left uppercase text-xs">
+                    <th className="pb-1 w-20">Código</th>
+                    <th className="pb-1">Descrição</th>
+                    <th className="pb-1 w-24 text-right">Quantidade</th>
+                    {incluirValores && <th className="pb-1 w-24 text-right">Valor Unit.</th>}
+                    {incluirValores && <th className="pb-1 w-28 text-right">Valor Total</th>}
+                    {incluirValores && <th className="pb-1 w-20 text-right">Repres.</th>}
+                  </tr>
+                </thead>
                 <tbody>
-                  {items.map((it, i) => <tr key={i} className="border-b border-gray-300"><td className="py-1 font-mono">{it.cod || "—"}</td><td className="py-1">{it.desc}</td><td className="py-1 font-mono text-right font-semibold">{formatQty(it.qty)}</td></tr>)}
-                  {items.length === 0 && <tr><td colSpan="3" className="text-center py-6">Nenhum item com quantidade preenchida.</td></tr>}
+                  {items.map((it, i) => (
+                    <tr key={i} className="border-b border-gray-300">
+                      <td className="py-1 font-mono">{it.cod || "—"}</td>
+                      <td className="py-1">{it.desc}</td>
+                      <td className="py-1 font-mono text-right font-semibold">{formatQty(it.qty)}</td>
+                      {incluirValores && <td className="py-1 font-mono text-right">{formatBRL(it.unit)}</td>}
+                      {incluirValores && <td className="py-1 font-mono text-right font-semibold">{formatBRL(it.totalItem)}</td>}
+                      {incluirValores && <td className="py-1 font-mono text-right">{totalGeral > 0 ? ((it.totalItem / totalGeral) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + "%" : "—"}</td>}
+                    </tr>
+                  ))}
+                  {items.length === 0 && <tr><td colSpan={colSpan} className="text-center py-6">Nenhum item com quantidade preenchida.</td></tr>}
+                  {incluirValores && items.length > 0 && (
+                    <tr className="border-t-2 border-black font-bold">
+                      <td className="py-2" colSpan="4">TOTAL GERAL</td>
+                      <td className="py-2 font-mono text-right">{formatBRL(totalGeral)}</td>
+                      <td className="py-2 font-mono text-right">100%</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               <style>{`@media print { @page { margin: 18mm 14mm; size: A4; } }`}</style>
