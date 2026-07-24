@@ -183,7 +183,7 @@
               { "row": 129, "cod": "12835", "desc": "BROCA SDS PLUS 10X160MM", "formula": "=ROUNDUP((C127/40),0)", "default": "", "pedido": "ESTOQUE", "complementar": "CADA 40 PARABOLT 3/8\" 1 BROCA", "isSubheader": false },
               { "row": 130, "cod": "10297", "desc": "BROCA SDS PLUS 13X260MM", "formula": "=ROUNDUP((C126/40),0)", "default": "", "pedido": "ESTOQUE", "complementar": "CADA 40 PARABOLT 1/2\"", "isSubheader": false },
               { "row": 131, "cod": "10888", "desc": "DISCO DIAMANTADO 230 MM SEGMENTADO 9\"", "formula": null, "default": 1, "pedido": "ESTOQUE", "complementar": "1 POR OBRA", "isSubheader": false },
-              { "row": 132, "cod": "9468", "desc": "SELANTE DE POLIURETANO 600ML", "formula": "=ROUNDUP((H132+I132+J132)/3.9,0)", "default": "", "pedido": "ESTOQUE", "complementar": "CADA BANANA DE SELANTE 600ML FAZ 3,9M LINEAR DE VEDAÇÃO.", "isSubheader": false }
+              { "row": 132, "cod": "9468", "desc": "SELANTE DE POLIURETANO 600ML", "formula": "=ROUNDUP((H132+I132+J132)/2,0)", "default": "", "pedido": "ESTOQUE", "complementar": "CADA BANANA DE SELANTE 600ML FAZ 2M LINEAR DE VEDAÇÃO.", "isSubheader": false }
             ]
           },
           {
@@ -314,8 +314,8 @@
             compute: (q) => Math.ceil(num(q[126]) / 40),
           },
           132: {
-            formula: "ROUNDUP((H×2 + Vint×4 + Vext×3) ÷ 3,9)",
-            compute: (_q, i) => Math.ceil((i.consolesHorizontal * 2 + i.consolesVerticalInterna * 4 + i.consolesVerticalExterna * 3) / 3.9),
+            formula: "ROUNDUP((H×2 + Vint×4 + Vext×3) ÷ 2)",
+            compute: (_q, i) => Math.ceil((i.consolesHorizontal * 2 + i.consolesVerticalInterna * 4 + i.consolesVerticalExterna * 3) / 2),
           },
         };
 
