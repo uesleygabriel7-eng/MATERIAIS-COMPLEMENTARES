@@ -7,11 +7,14 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- React -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
+    <!-- Babel Travado na Versão 7.21.0 -->
     <script src="https://unpkg.com/@babel/standalone@7.21.0/babel.min.js"></script>
 
+    <!-- SheetJS (Biblioteca para gerar Excel) -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -38,9 +41,9 @@
         const IconClose = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
 
         // ==========================================
-        // DADOS E PEÇAS
+        // DADOS E PEÇAS (PADRÃO INICIAL)
         // ==========================================
-        const materialsData = [
+        const initialMaterialsData = [
           {
             "title": "PILAR",
             "rows": [
@@ -209,7 +212,6 @@
             ]
           }
         ];
-        const sections = materialsData;
 
         // ==========================================
         // FÓRMULAS E LÓGICA DE CÁLCULO
@@ -321,21 +323,6 @@
 
         const isComputed = (row) => row in computedFormulas;
 
-        // ==========================================
-        // MOTOR DO APLICATIVO
-        // ==========================================
-        const buildInitialQuant = () => {
-          const map = {};
-          for (const s of sections) {
-            for (const r of s.rows) {
-              if (r.isSubheader) continue;
-              if (isComputed(r.row)) continue;
-              map[r.row] = r.default !== "" && r.default != null ? String(r.default) : "";
-            }
-          }
-          return map;
-        };
-
         const formatQty = (n) => {
           if (!Number.isFinite(n)) return "—";
           if (Number.isInteger(n)) return n.toLocaleString("pt-BR");
@@ -355,14 +342,16 @@
           const [loadingProjetos, setLoadingProjetos] = useState(false);
           const [statusSalvamento, setStatusSalvamento] = useState("");
 
+          // O Catálogo agora é um state, carregado do banco (ou do padrão se não existir)
+          const [catalogo, setCatalogo] = useState(initialMaterialsData);
+
           const [obra, setObra] = useState("");
           const [responsavel, setResponsavel] = useState("");
           const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
           const [inputs, setInputs] = useState(defaultInputs);
-          const [quant, setQuant] = useState(buildInitialQuant);
+          const [quant, setQuant] = useState({});
           const [overrides, setOverrides] = useState({}); 
           
-          // Estados Independentes Globais
           const [comentarios, setComentarios] = useState({});
           const [fotos, setFotos] = useState({});
           const [precos, setPrecos] = useState({});
@@ -371,22 +360,45 @@
           const [filtro, setFiltro] = useState("todos");
           const [photoModal, setPhotoModal] = useState(null);
           const [commentModal, setCommentModal] = useState(null);
+          const [newItemModal, setNewItemModal] = useState(null);
+          const [newItemForm, setNewItemForm] = useState({ cod: "", desc: "", pedido: "FÁBRICA", complementar: "" });
 
-          // Carrega as fotos globais para todos os usuários assim que logar
+          // Helper para gerar a lista de quantidades iniciais baseada no catálogo atual
+          const buildInitialQuant = (cat) => {
+            const map = {};
+            for (const s of cat) {
+              for (const r of s.rows) {
+                if (r.isSubheader) continue;
+                if (isComputed(r.row)) continue;
+                map[r.row] = r.default !== "" && r.default != null ? String(r.default) : "";
+              }
+            }
+            return map;
+          };
+
+          // Carrega Catálogo, Fotos e Preços globalmente
           useEffect(() => {
             if (!isAuthenticated) return;
+            
+            fetch(`${FIREBASE_BASE}/catalogo.json`, { cache: "no-store" })
+              .then(res => res.json())
+              .then(data => {
+                if (data && Array.isArray(data)) {
+                  setCatalogo(data);
+                  setQuant(prev => Object.keys(prev).length > 0 ? prev : buildInitialQuant(data));
+                } else {
+                  setQuant(buildInitialQuant(initialMaterialsData));
+                }
+              });
+
             fetch(`${FIREBASE_BASE}/fotos.json`, { cache: "no-store" })
               .then(res => res.json())
               .then(data => setFotos(data || {}));
-          }, [isAuthenticated]);
 
-          // Carrega preços globais (compartilhados entre todos os usuários e projetos)
-          useEffect(() => {
-            if (!isAuthenticated) return;
             fetch(`${FIREBASE_BASE}/precos.json`, { cache: "no-store" })
               .then(res => res.json())
               .then(data => setPrecos(data || {}));
-            // Sincroniza a cada 15s para pegar alterações feitas por outros usuários
+
             const timer = setInterval(() => {
               fetch(`${FIREBASE_BASE}/precos.json`, { cache: "no-store" })
                 .then(res => res.json())
@@ -395,16 +407,14 @@
             return () => clearInterval(timer);
           }, [isAuthenticated]);
 
-          // Carrega os comentários específicos do usuário selecionado
+          // Carrega Comentários e Projetos do Usuário logado
           useEffect(() => {
             if (!usuario) return;
             
-            // Puxa comentários individuais
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/comentarios.json`, { cache: "no-store" })
               .then(res => res.json())
               .then(data => setComentarios(data || {}));
 
-            // Puxa lista de projetos
             setLoadingProjetos(true);
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos.json`, { cache: "no-store" })
               .then((res) => res.json())
@@ -414,6 +424,33 @@
               })
               .catch(() => setLoadingProjetos(false));
           }, [usuario]);
+
+          const handleBlurCatalogo = () => {
+            fetch(`${FIREBASE_BASE}/catalogo.json`, {
+              method: "PUT",
+              body: JSON.stringify(catalogo)
+            });
+          };
+
+          const handleSaveNewItem = () => {
+            const newCat = [...catalogo];
+            newCat[newItemModal.sectionIndex].rows.push({
+              row: Date.now(),
+              cod: newItemForm.cod,
+              desc: newItemForm.desc,
+              pedido: newItemForm.pedido,
+              complementar: newItemForm.complementar,
+              formula: null,
+              default: "",
+              isSubheader: false
+            });
+            setCatalogo(newCat);
+            fetch(`${FIREBASE_BASE}/catalogo.json`, {
+              method: "PUT",
+              body: JSON.stringify(newCat)
+            });
+            setNewItemModal(null);
+          };
 
           const criarProjeto = () => {
             let nome = prompt("Digite o nome do novo projeto:");
@@ -427,13 +464,12 @@
             }
 
             setStatusSalvamento("Criando...");
-            // Apenas os dados de quantitativo vão para a gaveta do projeto
             const dadosIniciais = {
               obra: nome,
               responsavel: usuario,
               data: new Date().toISOString().slice(0, 10),
               inputs: defaultInputs,
-              quant: buildInitialQuant(),
+              quant: buildInitialQuant(catalogo),
               overrides: {}
             };
 
@@ -468,14 +504,14 @@
                   setResponsavel(d.responsavel || usuario);
                   setData(d.data || new Date().toISOString().slice(0, 10));
                   setInputs(d.inputs || defaultInputs);
-                  setQuant(d.quant || buildInitialQuant());
+                  setQuant(d.quant || buildInitialQuant(catalogo));
                   setOverrides(d.overrides || {}); 
                 } else {
                   setObra(nome);
                   setResponsavel(usuario);
                   setData(new Date().toISOString().slice(0, 10));
                   setInputs(defaultInputs);
-                  setQuant(buildInitialQuant());
+                  setQuant(buildInitialQuant(catalogo));
                   setOverrides({});
                 }
                 setProjetoAtual(nome);
@@ -485,63 +521,61 @@
 
           const salvarDados = () => {
             setStatusSalvamento("Salvando...");
-            // Salva apenas os números da obra na gaveta de projetos
-            fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${projetoAtual}.json`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ obra, responsavel, data, inputs, quant, overrides })
-            }).then(() => {
-              setStatusSalvamento("Salvo na nuvem!");
-              setTimeout(() => setStatusSalvamento(""), 2000);
-            });
+            const projectData = { obra, responsavel, data, inputs, quant, overrides };
+
+            if (obra !== projetoAtual && obra.trim() !== "") {
+              // Nome foi alterado. Salva na pasta nova e apaga a antiga.
+              fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${obra}.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(projectData)
+              }).then(() => {
+                fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${projetoAtual}.json`, {
+                  method: "DELETE"
+                }).then(() => {
+                  setListaProjetos(prev => [...prev.filter(p => p !== projetoAtual), obra]);
+                  setProjetoAtual(obra);
+                  setStatusSalvamento("Salvo na nuvem!");
+                  setTimeout(() => setStatusSalvamento(""), 2000);
+                });
+              });
+            } else {
+              // Salva normalmente
+              fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${projetoAtual}.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(projectData)
+              }).then(() => {
+                setStatusSalvamento("Salvo na nuvem!");
+                setTimeout(() => setStatusSalvamento(""), 2000);
+              });
+            }
           };
 
-          // Salva Comentários na gaveta independente do usuário em tempo real
           const atualizarComentario = (row, texto) => {
             const novos = { ...comentarios };
-            if (!texto.trim()) {
-              delete novos[row];
-            } else {
-              novos[row] = texto;
-            }
+            if (!texto.trim()) delete novos[row];
+            else novos[row] = texto;
             setComentarios(novos);
-            fetch(`${FIREBASE_BASE}/usuarios/${usuario}/comentarios.json`, {
-              method: "PUT",
-              body: JSON.stringify(novos)
-            });
+            fetch(`${FIREBASE_BASE}/usuarios/${usuario}/comentarios.json`, { method: "PUT", body: JSON.stringify(novos) });
           };
 
-          // Salva/Apaga Fotos na gaveta global em tempo real
           const atualizarFoto = (row, base64) => {
             const novas = { ...fotos };
-            if (!base64) {
-              delete novas[row];
-            } else {
-              novas[row] = base64;
-            }
+            if (!base64) delete novas[row];
+            else novas[row] = base64;
             setFotos(novas);
-            fetch(`${FIREBASE_BASE}/fotos.json`, {
-              method: "PUT",
-              body: JSON.stringify(novas)
-            });
+            fetch(`${FIREBASE_BASE}/fotos.json`, { method: "PUT", body: JSON.stringify(novas) });
           };
 
-          // Salva Preço Unitário globalmente (compartilhado entre TODOS os usuários e planilhas)
           const atualizarPreco = (row, valor) => {
             const novos = { ...precos };
-            if (valor === "" || valor === null || valor === undefined) {
-              delete novos[row];
-            } else {
-              novos[row] = String(valor);
-            }
+            if (valor === "" || valor === null || valor === undefined) delete novos[row];
+            else novos[row] = String(valor);
             setPrecos(novos);
-            fetch(`${FIREBASE_BASE}/precos.json`, {
-              method: "PUT",
-              body: JSON.stringify(novos)
-            });
+            fetch(`${FIREBASE_BASE}/precos.json`, { method: "PUT", body: JSON.stringify(novos) });
           };
 
-          // Converte texto pt-BR (vírgula ou ponto) para número
           const parsePreco = (v) => {
             if (v === undefined || v === null || v === "") return 0;
             const n = parseFloat(String(v).replace(",", "."));
@@ -555,7 +589,7 @@
 
           const computedQty = useMemo(() => {
             const map = {};
-            for (const s of sections) {
+            for (const s of catalogo) {
               for (const r of s.rows) {
                 if (r.isSubheader) continue;
                 if (!isComputed(r.row)) {
@@ -573,11 +607,11 @@
               }
             }
             return map;
-          }, [quant, inputs, overrides]);
+          }, [quant, inputs, overrides, catalogo]);
 
           const totalGeral = useMemo(() => {
             let total = 0;
-            for (const sec of sections) {
+            for (const sec of catalogo) {
               for (const r of sec.rows) {
                 if (r.isSubheader) continue;
                 const qty = computedQty[r.row] ?? 0;
@@ -586,16 +620,16 @@
               }
             }
             return total;
-          }, [computedQty, precos]);
+          }, [computedQty, precos, catalogo]);
 
-          const totalLinhasPreenchidas = sections.reduce(
+          const totalLinhasPreenchidas = catalogo.reduce(
             (acc, s) => acc + s.rows.filter((r) => !r.isSubheader && (computedQty[r.row] ?? 0) > 0).length, 0
           );
 
           const reset = () => {
             if (confirm("Limpar todos os campos da lista deste projeto?")) {
               setInputs(defaultInputs);
-              setQuant(buildInitialQuant());
+              setQuant(buildInitialQuant(catalogo));
               setOverrides({});
             }
           };
@@ -618,39 +652,16 @@
             ws_data.push([]);
             rowIndex += withVals ? 5 : 4;
 
-            const headerStyle = {
-              font: { bold: true, color: { rgb: "FFFFFF" } },
-              fill: { fgColor: { rgb: "4F81BD" } },
-              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
-              alignment: { horizontal: "center", vertical: "center" }
-            };
-            const groupStyle = {
-              font: { bold: true },
-              fill: { fgColor: { rgb: "DCE6F1" } },
-              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
-              alignment: { vertical: "center" }
-            };
-            const cellStyle = {
-              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
-              alignment: { vertical: "center" }
-            };
-            const numStyle = {
-              border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
-              alignment: { horizontal: "right", vertical: "center" }
-            };
+            const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "4F81BD" } }, border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }, alignment: { horizontal: "center", vertical: "center" } };
+            const groupStyle = { font: { bold: true }, fill: { fgColor: { rgb: "DCE6F1" } }, border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }, alignment: { vertical: "center" } };
+            const cellStyle = { border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }, alignment: { vertical: "center" } };
+            const numStyle = { border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }, alignment: { horizontal: "right", vertical: "center" } };
             const moneyStyle = { ...numStyle, numFmt: '"R$" #,##0.00' };
-            const totalRowStyle = {
-              font: { bold: true, color: { rgb: "FFFFFF" } },
-              fill: { fgColor: { rgb: "2E7D32" } },
-              border: { top: { style: "medium" }, bottom: { style: "medium" }, left: { style: "thin" }, right: { style: "thin" } },
-              alignment: { horizontal: "right", vertical: "center" }
-            };
-            const padGroup = (arr) => {
-              while (arr.length < numCols) arr.push({ v: "", s: groupStyle });
-              return arr;
-            };
+            const totalRowStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2E7D32" } }, border: { top: { style: "medium" }, bottom: { style: "medium" }, left: { style: "thin" }, right: { style: "thin" } }, alignment: { horizontal: "right", vertical: "center" } };
+            
+            const padGroup = (arr) => { while (arr.length < numCols) arr.push({ v: "", s: groupStyle }); return arr; };
 
-            sections.forEach(s => {
+            catalogo.forEach(s => {
               const grpRow = padGroup([{ v: "GRUPO: " + s.title, s: groupStyle }]);
               ws_data.push(grpRow);
               merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: lastCol } });
@@ -853,8 +864,8 @@
                     ))}
                   </div>
 
-                  {sections.map((s, idx) => (
-                    <SectionCard key={s.title || idx} section={s} index={idx} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} precos={precos} atualizarPreco={atualizarPreco} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
+                  {catalogo.map((s, idx) => (
+                    <SectionCard key={s.title || idx} section={s} sectionIndex={idx} catalogo={catalogo} setCatalogo={setCatalogo} handleBlurCatalogo={handleBlurCatalogo} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} setNewItemModal={setNewItemModal} precos={precos} atualizarPreco={atualizarPreco} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
                   ))}
 
                   <section className="rounded-lg border-2 border-emerald-500 bg-emerald-50 p-5 shadow-sm">
@@ -870,6 +881,7 @@
                   <footer className="text-center text-xs text-slate-500 py-6">{totalLinhasPreenchidas} itens preenchidos neste projeto.</footer>
                 </main>
 
+                {/* MODAL FOTO */}
                 {photoModal && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col">
@@ -940,6 +952,7 @@
                   </div>
                 )}
 
+                {/* MODAL COMENTÁRIO */}
                 {commentModal && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
@@ -983,8 +996,45 @@
                   </div>
                 )}
 
+                {/* MODAL NOVO ITEM */}
+                {newItemModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
+                          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                              <h3 className="font-semibold text-slate-800 text-sm">Novo item em: {catalogo[newItemModal.sectionIndex].title}</h3>
+                              <button onClick={() => setNewItemModal(null)} className="text-slate-400 hover:text-slate-700"><IconClose /></button>
+                          </div>
+                          <div className="p-4 bg-white flex flex-col gap-3">
+                              <div>
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Código</label>
+                                  <input className="w-full border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 rounded-md p-2 text-sm" value={newItemForm.cod} onChange={e => setNewItemForm({...newItemForm, cod: e.target.value})} placeholder="Ex: 12345" />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Descrição</label>
+                                  <input className="w-full border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 rounded-md p-2 text-sm" value={newItemForm.desc} onChange={e => setNewItemForm({...newItemForm, desc: e.target.value})} placeholder="Nome da peça" />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Pedido</label>
+                                  <select className="w-full border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 rounded-md p-2 text-sm font-semibold text-slate-700" value={newItemForm.pedido} onChange={e => setNewItemForm({...newItemForm, pedido: e.target.value})}>
+                                      <option value="FÁBRICA">FÁBRICA</option>
+                                      <option value="ESTOQUE">ESTOQUE</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Complementar</label>
+                                  <input className="w-full border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 rounded-md p-2 text-sm" value={newItemForm.complementar} onChange={e => setNewItemForm({...newItemForm, complementar: e.target.value})} placeholder="Onde é usado?" />
+                              </div>
+                          </div>
+                          <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+                              <button onClick={() => setNewItemModal(null)} className="px-4 py-2 text-slate-600 bg-slate-200 text-sm font-medium rounded-md hover:bg-slate-300 transition">Cancelar</button>
+                              <button onClick={handleSaveNewItem} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition">Adicionar Peça</button>
+                          </div>
+                      </div>
+                  </div>
+                )}
+
               </div>
-              <PrintReport obra={obra} responsavel={responsavel} data={data} sections={sections} computedQty={computedQty} precos={precos} incluirValores={incluirValores} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
+              <PrintReport obra={obra} responsavel={responsavel} data={data} sections={catalogo} computedQty={computedQty} precos={precos} incluirValores={incluirValores} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
             </div>
           );
         }
@@ -1013,14 +1063,14 @@
           );
         }
 
-        function SectionCard({ section, index, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal, precos, atualizarPreco, totalGeral, parsePreco, formatBRL }) {
+        function SectionCard({ section, sectionIndex, catalogo, setCatalogo, handleBlurCatalogo, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal, precos, atualizarPreco, totalGeral, parsePreco, formatBRL, setNewItemModal }) {
           const visibleRows = (section.rows || []).filter((r) => r.isSubheader || filtro === "todos" || r.pedido === filtro);
           if (visibleRows.filter((r) => !r.isSubheader).length === 0) return null;
 
           return (
             <details open className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden mb-4">
               <summary className="cursor-pointer list-none px-5 py-4 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition">
-                <div className="flex items-center gap-3"><span className="font-mono text-xs text-slate-500 tabular-nums">{String(index + 1).padStart(2, "0")}</span><h2 className="text-lg font-semibold">{section.title}</h2></div>
+                <div className="flex items-center gap-3"><span className="font-mono text-xs text-slate-500 tabular-nums">{String(sectionIndex + 1).padStart(2, "0")}</span><h2 className="text-lg font-semibold">{section.title}</h2></div>
                 <span className="text-xs text-slate-500 font-mono">{section.rows.filter((r) => !r.isSubheader).length} itens</span>
               </summary>
               <div className="overflow-x-auto">
@@ -1039,10 +1089,30 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleRows.map((r) => {
+                    {(section.rows || []).map((r, rowIndex) => {
+                      const isVisible = r.isSubheader || filtro === "todos" || r.pedido === filtro;
+                      if (!isVisible) return null;
+
                       if (r.isSubheader) {
-                        return <tr key={r.row} className="bg-slate-100 border-t border-slate-200"><td colSpan="9" className="px-3 py-2 font-semibold text-sm uppercase tracking-wide">{r.desc}</td></tr>;
+                        return (
+                          <tr key={r.row} className="bg-slate-100 border-t border-slate-200">
+                            <td colSpan="9" className="px-3 py-2 font-semibold text-sm uppercase tracking-wide">
+                              <input 
+                                type="text" 
+                                className="w-full bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded outline-none transition-all" 
+                                value={r.desc || ""} 
+                                onChange={(e) => {
+                                  const newCat = [...catalogo];
+                                  newCat[sectionIndex].rows[rowIndex].desc = e.target.value;
+                                  setCatalogo(newCat);
+                                }} 
+                                onBlur={handleBlurCatalogo}
+                              />
+                            </td>
+                          </tr>
+                        );
                       }
+                      
                       const computed = isComputed(r.row);
                       const meta = computed ? computedFormulas[r.row] : null;
                       const params = rowParams[r.row];
@@ -1053,10 +1123,32 @@
                       return (
                         <Fragment key={r.row}>
                           <tr className="border-t border-slate-200 hover:bg-slate-50 transition">
-                            <td className="px-3 py-2 font-mono text-xs text-slate-500 tabular-nums">{r.cod}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-slate-500 tabular-nums">
+                              <input 
+                                type="text" 
+                                className="w-full bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 outline-none transition-all" 
+                                value={r.cod || ""} 
+                                onChange={(e) => {
+                                  const newCat = [...catalogo];
+                                  newCat[sectionIndex].rows[rowIndex].cod = e.target.value;
+                                  setCatalogo(newCat);
+                                }} 
+                                onBlur={handleBlurCatalogo}
+                              />
+                            </td>
                             <td className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
-                                <span>{r.desc}</span>
+                                <input 
+                                  type="text" 
+                                  className="w-full font-medium bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 outline-none transition-all" 
+                                  value={r.desc || ""} 
+                                  onChange={(e) => {
+                                    const newCat = [...catalogo];
+                                    newCat[sectionIndex].rows[rowIndex].desc = e.target.value;
+                                    setCatalogo(newCat);
+                                  }} 
+                                  onBlur={handleBlurCatalogo}
+                                />
                                 <button onClick={() => setPhotoModal({ row: r.row, desc: r.desc })} className="text-slate-400 hover:text-blue-600 transition" title="Anexar ou ver foto">
                                   {fotos[r.row] ? <IconCamera /> : <IconClip />}
                                 </button>
@@ -1077,7 +1169,20 @@
                             <td className="px-3 py-2">
                               {r.pedido && <span className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ${r.pedido === "FÁBRICA" ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-700"}`}>{r.pedido}</span>}
                             </td>
-                            <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{r.complementar}{meta && <div className="text-[10px] mt-0.5 italic opacity-70">{meta.formula}</div>}</td>
+                            <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">
+                              <input 
+                                type="text" 
+                                className="w-full bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 outline-none transition-all" 
+                                value={r.complementar || ""} 
+                                onChange={(e) => {
+                                  const newCat = [...catalogo];
+                                  newCat[sectionIndex].rows[rowIndex].complementar = e.target.value;
+                                  setCatalogo(newCat);
+                                }} 
+                                onBlur={handleBlurCatalogo}
+                              />
+                              {meta && <div className="text-[10px] mt-0.5 italic opacity-70 px-1">{meta.formula}</div>}
+                            </td>
                             <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => setCommentModal({ row: r.row, current: comentarios[r.row] || "" })}
@@ -1121,6 +1226,19 @@
                         </Fragment>
                       );
                     })}
+                    {/* BOTÃO ADICIONAR ITEM NESTE BLOCO */}
+                    <tr>
+                      <td colSpan="9" className="px-3 py-3 bg-slate-50/50 border-t border-slate-200">
+                        <button
+                          onClick={() => {
+                            setNewItemModal({ sectionIndex });
+                          }}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center justify-center gap-1 w-full p-2 border border-dashed border-blue-200 rounded hover:bg-blue-50 transition"
+                        >
+                          <IconPlus /> Adicionar nova peça em {section.title}
+                        </button>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
