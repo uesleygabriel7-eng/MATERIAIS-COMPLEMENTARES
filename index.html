@@ -351,14 +351,13 @@
           const [inputs, setInputs] = useState(defaultInputs);
           const [quant, setQuant] = useState({});
           const [overrides, setOverrides] = useState({}); 
+          const [galvanizados, setGalvanizados] = useState({}); // NOVO ESTADO AQUI
           
           const [comentarios, setComentarios] = useState({});
           const [fotos, setFotos] = useState({});
           const [precos, setPrecos] = useState({});
           
-          // Novos controles
           const [incluirValores, setIncluirValores] = useState(false);
-          const [galvanizacaoAFogo, setGalvanizacaoAFogo] = useState(false);
           
           const [filtro, setFiltro] = useState("todos");
           const [photoModal, setPhotoModal] = useState(null);
@@ -473,7 +472,8 @@
               data: new Date().toISOString().slice(0, 10),
               inputs: defaultInputs,
               quant: buildInitialQuant(catalogo),
-              overrides: {}
+              overrides: {},
+              galvanizados: {}
             };
 
             fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${nome}.json`, {
@@ -509,6 +509,7 @@
                   setInputs(d.inputs || defaultInputs);
                   setQuant(d.quant || buildInitialQuant(catalogo));
                   setOverrides(d.overrides || {}); 
+                  setGalvanizados(d.galvanizados || {});
                 } else {
                   setObra(nome);
                   setResponsavel(usuario);
@@ -516,6 +517,7 @@
                   setInputs(defaultInputs);
                   setQuant(buildInitialQuant(catalogo));
                   setOverrides({});
+                  setGalvanizados({});
                 }
                 setProjetoAtual(nome);
                 setStatusSalvamento("");
@@ -524,7 +526,7 @@
 
           const salvarDados = () => {
             setStatusSalvamento("Salvando...");
-            const projectData = { obra, responsavel, data, inputs, quant, overrides };
+            const projectData = { obra, responsavel, data, inputs, quant, overrides, galvanizados };
 
             if (obra !== projetoAtual && obra.trim() !== "") {
               fetch(`${FIREBASE_BASE}/usuarios/${usuario}/projetos/${obra}.json`, {
@@ -632,6 +634,7 @@
               setInputs(defaultInputs);
               setQuant(buildInitialQuant(catalogo));
               setOverrides({});
+              setGalvanizados({});
             }
           };
 
@@ -646,20 +649,6 @@
             const lastCol = numCols - 1;
 
             const titleStyle = { font: { bold: true }, alignment: { vertical: "center" } };
-            
-            // Adiciona aviso de galvanização no topo se marcado
-            if (galvanizacaoAFogo) {
-              const warningStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 }, fill: { fgColor: { rgb: "DC2626" } }, alignment: { horizontal: "center", vertical: "center" } };
-              const warningRow = [];
-              for (let i = 0; i < numCols; i++) {
-                warningRow.push({ v: i === 0 ? "ATENÇÃO: TODOS OS MATERIAIS DESTA OBRA SÃO GALVANIZADOS À FOGO" : "", s: warningStyle });
-              }
-              ws_data.push(warningRow);
-              merges.push({ s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: lastCol } });
-              rowIndex++;
-              ws_data.push([]); 
-              rowIndex++;
-            }
 
             ws_data.push([{ v: "Obra:", s: titleStyle }, { v: obra || "-" }]);
             ws_data.push([{ v: "Responsável:", s: titleStyle }, { v: responsavel || "-" }]);
@@ -703,11 +692,17 @@
                   rowIndex++;
                 } else {
                   const qty = computedQty[r.row] || 0;
+                  
+                  // Tratamento da linha se for galvanizada:
+                  const isGalv = !!galvanizados[r.row];
+                  const finalDesc = isGalv ? `${r.desc} - GALVANIZADO À FOGO` : r.desc;
+                  
                   const row = [
                     { v: r.cod || "-", s: cellStyle },
-                    { v: r.desc, s: cellStyle },
+                    { v: finalDesc, s: isGalv ? { ...cellStyle, font: { color: { rgb: "DC2626" }, bold: true } } : cellStyle },
                     { v: qty, t: "n", s: numStyle }
                   ];
+                  
                   if (withVals) {
                     const unit = parsePreco(precos[r.row]);
                     const tot = qty * unit;
@@ -850,10 +845,6 @@
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <label className="hidden md:inline-flex items-center gap-2 text-xs font-bold text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded cursor-pointer hover:bg-red-100 transition" title="Destaca no PDF e Excel que os materiais são galvanizados a fogo">
-                        <input type="checkbox" checked={galvanizacaoAFogo} onChange={(e) => setGalvanizacaoAFogo(e.target.checked)} className="w-4 h-4 accent-red-600" />
-                        Galvanização à fogo
-                      </label>
                       <label className="hidden md:inline-flex items-center gap-2 text-xs font-medium text-slate-700 bg-slate-100 border border-slate-200 px-3 py-2 rounded cursor-pointer hover:bg-slate-200 transition" title="Se marcado, exporta as colunas Valor Unitário, Valor Total e Representatividade no PDF e Excel">
                         <input type="checkbox" checked={incluirValores} onChange={(e) => setIncluirValores(e.target.checked)} className="w-4 h-4 accent-blue-600" />
                         Incluir valores no PDF/Excel
@@ -885,7 +876,7 @@
                   </div>
 
                   {catalogo.map((s, idx) => (
-                    <SectionCard key={s.title || idx} section={s} sectionIndex={idx} catalogo={catalogo} setCatalogo={setCatalogo} handleBlurCatalogo={handleBlurCatalogo} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} setNewItemModal={setNewItemModal} precos={precos} atualizarPreco={atualizarPreco} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
+                    <SectionCard key={s.title || idx} section={s} sectionIndex={idx} catalogo={catalogo} setCatalogo={setCatalogo} handleBlurCatalogo={handleBlurCatalogo} quant={quant} setQuant={setQuant} overrides={overrides} setOverrides={setOverrides} galvanizados={galvanizados} setGalvanizados={setGalvanizados} computedQty={computedQty} filtro={filtro} inputs={inputs} updateInput={updateInput} comentarios={comentarios} fotos={fotos} setPhotoModal={setPhotoModal} setCommentModal={setCommentModal} setNewItemModal={setNewItemModal} precos={precos} atualizarPreco={atualizarPreco} totalGeral={totalGeral} parsePreco={parsePreco} formatBRL={formatBRL} />
                   ))}
 
                   <section className="rounded-lg border-2 border-emerald-500 bg-emerald-50 p-5 shadow-sm">
@@ -1062,7 +1053,7 @@
                 computedQty={computedQty} 
                 precos={precos} 
                 incluirValores={incluirValores} 
-                galvanizacaoAFogo={galvanizacaoAFogo} 
+                galvanizados={galvanizados} 
                 totalGeral={totalGeral} 
                 parsePreco={parsePreco} 
                 formatBRL={formatBRL} 
@@ -1095,7 +1086,7 @@
           );
         }
 
-        function SectionCard({ section, sectionIndex, catalogo, setCatalogo, handleBlurCatalogo, quant, setQuant, overrides, setOverrides, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal, precos, atualizarPreco, totalGeral, parsePreco, formatBRL, setNewItemModal }) {
+        function SectionCard({ section, sectionIndex, catalogo, setCatalogo, handleBlurCatalogo, quant, setQuant, overrides, setOverrides, galvanizados, setGalvanizados, computedQty, filtro, inputs, updateInput, comentarios, fotos, setPhotoModal, setCommentModal, precos, atualizarPreco, totalGeral, parsePreco, formatBRL, setNewItemModal }) {
           const visibleRows = (section.rows || []).filter((r) => r.isSubheader || filtro === "todos" || r.pedido === filtro);
           if (visibleRows.filter((r) => !r.isSubheader).length === 0) return null;
 
@@ -1169,21 +1160,41 @@
                               />
                             </td>
                             <td className="px-3 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <input 
-                                  type="text" 
-                                  className="w-full font-medium bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 outline-none transition-all" 
-                                  value={r.desc || ""} 
-                                  onChange={(e) => {
-                                    const newCat = [...catalogo];
-                                    newCat[sectionIndex].rows[rowIndex].desc = e.target.value;
-                                    setCatalogo(newCat);
-                                  }} 
-                                  onBlur={handleBlurCatalogo}
-                                />
-                                <button onClick={() => setPhotoModal({ row: r.row, desc: r.desc })} className="text-slate-400 hover:text-blue-600 transition" title="Anexar ou ver foto">
-                                  {fotos[r.row] ? <IconCamera /> : <IconClip />}
-                                </button>
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="text" 
+                                    className="w-full font-medium bg-transparent border-transparent hover:border-slate-300 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 outline-none transition-all" 
+                                    value={r.desc || ""} 
+                                    onChange={(e) => {
+                                      const newCat = [...catalogo];
+                                      newCat[sectionIndex].rows[rowIndex].desc = e.target.value;
+                                      setCatalogo(newCat);
+                                    }} 
+                                    onBlur={handleBlurCatalogo}
+                                  />
+                                  <label 
+                                    className={`flex-shrink-0 flex items-center gap-1 cursor-pointer px-1.5 py-1 rounded transition-all border ${galvanizados[r.row] ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' : 'bg-transparent text-slate-400 hover:text-red-500 border-transparent hover:bg-slate-100'}`} 
+                                    title={galvanizados[r.row] ? "Remover Galvanização" : "Marcar como Galvanizado à Fogo"}
+                                  >
+                                      <input 
+                                          type="checkbox" 
+                                          className="w-3.5 h-3.5 accent-red-600 cursor-pointer"
+                                          checked={!!galvanizados[r.row]}
+                                          onChange={(e) => setGalvanizados(prev => ({ ...prev, [r.row]: e.target.checked }))}
+                                      />
+                                  </label>
+                                  <button onClick={() => setPhotoModal({ row: r.row, desc: r.desc })} className="text-slate-400 hover:text-blue-600 transition" title="Anexar ou ver foto">
+                                    {fotos[r.row] ? <IconCamera /> : <IconClip />}
+                                  </button>
+                                </div>
+                                {galvanizados[r.row] && (
+                                  <div className="px-1">
+                                    <span className="text-[9px] font-bold uppercase tracking-wider text-red-700 bg-red-100 px-1.5 py-0.5 rounded border border-red-200">
+                                      Galvanizado à Fogo
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </td>
                             <td className="px-3 py-2">
@@ -1278,24 +1289,17 @@
           );
         }
 
-        function PrintReport({ obra, responsavel, data, sections, computedQty, precos, incluirValores, galvanizacaoAFogo, totalGeral, parsePreco, formatBRL }) {
+        function PrintReport({ obra, responsavel, data, sections, computedQty, precos, incluirValores, galvanizados, totalGeral, parsePreco, formatBRL }) {
           const items = sections.flatMap((s) => (s.rows||[]).filter((r) => !r.isSubheader && (computedQty[r.row] ?? 0) > 0).map((r) => {
             const qty = computedQty[r.row] ?? 0;
             const unit = parsePreco(precos[r.row]);
             const totalItem = qty * unit;
-            return { section: s.title, cod: r.cod, desc: r.desc, qty, unit, totalItem };
+            const isGalv = !!galvanizados[r.row];
+            return { section: s.title, cod: r.cod, desc: r.desc, qty, unit, totalItem, isGalv };
           }));
           const colSpan = incluirValores ? 6 : 3;
           return (
             <div className="hidden print:block text-black font-sans text-sm">
-              {galvanizacaoAFogo && (
-                <div 
-                  className="border-4 border-red-700 bg-red-100 text-red-800 font-extrabold text-center py-2 mb-4 text-base uppercase"
-                  style={{ WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}
-                >
-                  ATENÇÃO: TODOS OS MATERIAIS DESTA OBRA SÃO GALVANIZADOS À FOGO
-                </div>
-              )}
               <div className="border-b-2 border-black pb-2 mb-4">
                 <h1 className="text-2xl font-bold mb-2">Lista de Materiais</h1>
                 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1321,7 +1325,14 @@
                   {items.map((it, i) => (
                     <tr key={i} className="border-b border-gray-300">
                       <td className="py-1 font-mono">{it.cod || "—"}</td>
-                      <td className="py-1">{it.desc}</td>
+                      <td className="py-1">
+                        {it.desc}
+                        {it.isGalv && (
+                          <span className="ml-2 text-[9px] font-bold text-red-700 bg-red-100 border border-red-300 px-1 py-0.5 rounded align-middle" style={{ WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}>
+                            GALVANIZADO À FOGO
+                          </span>
+                        )}
+                      </td>
                       <td className="py-1 font-mono text-right font-semibold">{formatQty(it.qty)}</td>
                       {incluirValores && <td className="py-1 font-mono text-right">{formatBRL(it.unit)}</td>}
                       {incluirValores && <td className="py-1 font-mono text-right font-semibold">{formatBRL(it.totalItem)}</td>}
