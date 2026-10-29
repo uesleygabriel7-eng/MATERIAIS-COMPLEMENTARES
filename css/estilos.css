@@ -1,0 +1,9 @@
+/* ==========================================
+   ESTILOS PERSONALIZADOS
+   O visual principal usa Tailwind (classes direto no HTML/JS).
+   Coloque aqui qualquer estilo extra que quiser adicionar.
+   ========================================== */
+
+body {
+  margin: 0;
+}
